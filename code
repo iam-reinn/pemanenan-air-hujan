@@ -1,0 +1,170 @@
+#define BLYNK_TEMPLATE_ID "TMPL6oL5mWFa3"
+#define BLYNK_TEMPLATE_NAME "TUJUH"
+#define BLYNK_AUTH_TOKEN "XkqS9PBUuhkqKP-rCW0Z0fLcRRvyDozc"
+
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <NewPing.h>
+
+// WiFi credentials
+char ssid[] = "POCO X3 Pro"; 
+char pass[] = "";
+
+// Pin konfigurasi
+#define PIN_RAIN_SENSOR 32
+#define PIN_TRIG 23
+#define PIN_ECHO 22
+#define PIN_TDS 35
+#define LED_MERAH 25
+#define LED_KUNING 26
+#define LED_HIJAU 27
+#define RELAY_A 18
+#define RELAY_B 5
+#define RELAY_C 17
+
+#define MAX_DISTANCE 30
+NewPing sonar(PIN_TRIG, PIN_ECHO, MAX_DISTANCE);
+
+// Variabel
+int volume = 0;
+int tdsValue = 0;
+int rainValue = 0;
+int threshold = 2000;
+
+#define VPIN_VOLUME V0
+#define VPIN_TDS V1
+#define VPIN_KRAN V4
+
+BLYNK_WRITE(VPIN_KRAN) {
+  int state = param.asInt();
+  digitalWrite(RELAY_C, state);
+  Serial.print("Kran manual dari Blynk: ");
+  Serial.println(state == HIGH ? "HIDUP" : "MATI");
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  // Mulai koneksi WiFi
+  Serial.print("Menghubungkan ke WiFi: ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, pass);
+
+  unsigned long startAttemptTime = millis();
+
+  // Coba konek ke WiFi maksimal 30 detik
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 30000) {
+    Serial.print(".");
+    delay(500);
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi Terhubung!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nWiFi gagal terhubung.");
+  }
+
+  // Lanjut konek ke Blynk
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  pinMode(PIN_RAIN_SENSOR, INPUT);
+  pinMode(PIN_TDS, INPUT);
+
+  pinMode(LED_MERAH, OUTPUT);
+  pinMode(LED_KUNING, OUTPUT);
+  pinMode(LED_HIJAU, OUTPUT);
+
+  pinMode(RELAY_A, OUTPUT);
+  pinMode(RELAY_B, OUTPUT);
+  pinMode(RELAY_C, OUTPUT);
+
+  digitalWrite(RELAY_A, LOW);
+  digitalWrite(RELAY_B, LOW);
+  digitalWrite(RELAY_C, LOW);
+
+  Serial.println("Sistem mulai...");
+}
+
+void loop() {
+  Blynk.run();
+  cekHujan();
+  ukurVolume();
+  ukurTDS();
+  kendaliSolenoid();
+  updateLED();
+  delay(1000);
+}
+
+void cekHujan() {
+  rainValue = analogRead(PIN_RAIN_SENSOR);
+
+  // Tampilkan nilai ke Serial Monitor
+  Serial.print("Nilai sensor hujan: ");
+  Serial.println(rainValue);
+
+  // Tentukan status cuaca
+  if (rainValue < threshold) {
+    Serial.println("Status: HUJAN");
+  } else {
+    Serial.println("Status: TIDAK HUJAN");
+  }
+
+}
+
+void ukurVolume() {
+  int jarak = sonar.ping_cm();
+  jarak = constrain(jarak, 0, 30);
+  volume = 100 - map(jarak, 0, 30, 0, 100);
+  Blynk.virtualWrite(VPIN_VOLUME, volume);
+  Serial.print("Jarak air: ");
+  Serial.print(jarak);
+  Serial.print(" cm | Volume: ");
+  Serial.print(volume);
+  Serial.println(" %");
+}
+
+void ukurTDS() {
+  tdsValue = analogRead(PIN_TDS);
+  Blynk.virtualWrite(VPIN_TDS, tdsValue);
+  Serial.print("Nilai TDS: ");
+  Serial.println(tdsValue);
+}
+
+void kendaliSolenoid() {
+  if (rainValue < threshold) {
+    if (volume < 95) {
+      digitalWrite(RELAY_A, HIGH);
+      digitalWrite(RELAY_B, LOW);
+      Serial.println("Kran otomatis: MENGISI (RELAY_A ON)");
+    } else {
+      digitalWrite(RELAY_A, LOW);
+      digitalWrite(RELAY_B, HIGH);
+      Serial.println("Kran otomatis: PENUH (RELAY_B ON)");
+    }
+  } else {
+    digitalWrite(RELAY_A, LOW);
+    digitalWrite(RELAY_B, LOW);
+    Serial.println("Kran otomatis: MATI (tidak hujan)");
+  }
+}
+
+void updateLED() {
+  if (volume < 20) {
+    digitalWrite(LED_MERAH, HIGH);
+    digitalWrite(LED_KUNING, LOW);
+    digitalWrite(LED_HIJAU, LOW);
+    Serial.println("LED Indikator: MERAH (Air sedikit)");
+  } else if (volume < 80) {
+    digitalWrite(LED_MERAH, LOW);
+    digitalWrite(LED_KUNING, HIGH);
+    digitalWrite(LED_HIJAU, LOW);
+    Serial.println("LED Indikator: KUNING (Air sedang)");
+  } else {
+    digitalWrite(LED_MERAH, LOW);
+    digitalWrite(LED_KUNING, LOW);
+    digitalWrite(LED_HIJAU, HIGH);
+    Serial.println("LED Indikator: HIJAU (Air penuh)");
+  }
+}
