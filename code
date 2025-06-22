@@ -7,7 +7,7 @@
 #include <NewPing.h>
 
 // WiFi credentials
-char ssid[] = "POCO X3 Pro"; 
+char ssid[] = "POCO X3 Pro";
 char pass[] = "";
 
 // Pin konfigurasi
@@ -25,16 +25,25 @@ char pass[] = "";
 #define MAX_DISTANCE 30
 NewPing sonar(PIN_TRIG, PIN_ECHO, MAX_DISTANCE);
 
-// Variabel
+// Virtual pin
+#define VPIN_VOLUME V0
+#define VPIN_TDS V1
+#define VPIN_RELAY_A V2
+#define VPIN_RELAY_B V3
+#define VPIN_KRAN V4
+#define VPIN_OTOMATIS V5
+
+// Variabel sistem
 int volume = 0;
 int tdsValue = 0;
 int rainValue = 0;
 int threshold = 2000;
+bool wifiConnected = false;
+bool modeOtomatis = true;
 
-#define VPIN_VOLUME V0
-#define VPIN_TDS V1
-#define VPIN_KRAN V4
+unsigned long lastReconnectAttempt = 0;
 
+// Fungsi Blynk kontrol
 BLYNK_WRITE(VPIN_KRAN) {
   int state = param.asInt();
   digitalWrite(RELAY_C, state);
@@ -42,31 +51,75 @@ BLYNK_WRITE(VPIN_KRAN) {
   Serial.println(state == HIGH ? "HIDUP" : "MATI");
 }
 
+BLYNK_WRITE(VPIN_RELAY_A) {
+  if (!modeOtomatis) {
+    int state = param.asInt();
+    digitalWrite(RELAY_A, state);
+    Serial.print("Manual Blynk - Relay A: ");
+    Serial.println(state == HIGH ? "ON" : "OFF");
+  }
+}
+
+BLYNK_WRITE(VPIN_RELAY_B) {
+  if (!modeOtomatis) {
+    int state = param.asInt();
+    digitalWrite(RELAY_B, state);
+    Serial.print("Manual Blynk - Relay B: ");
+    Serial.println(state == HIGH ? "ON" : "OFF");
+  }
+}
+
+BLYNK_WRITE(VPIN_OTOMATIS) {
+  modeOtomatis = param.asInt();
+  Serial.print("Mode Otomatis: ");
+  Serial.println(modeOtomatis ? "AKTIF" : "NONAKTIF");
+
+  if (!modeOtomatis) {
+    Serial.println("Manual mode aktif, menunggu kontrol manual dari Blynk.");
+  }
+}
+
+void koneksiWiFi() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi tidak terhubung, mencoba reconnect...");
+    WiFi.disconnect();
+    WiFi.begin(ssid, pass);
+
+    unsigned long waktuAwal = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - waktuAwal < 15000) {
+      Serial.print(".");
+      delay(500);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nWiFi berhasil terhubung!");
+      Serial.print("IP: ");
+      Serial.println(WiFi.localIP());
+      wifiConnected = true;
+    } else {
+      Serial.println("\nGagal konek WiFi.");
+      wifiConnected = false;
+    }
+  } else {
+    wifiConnected = true;
+  }
+}
+
 void setup() {
   Serial.begin(9600);
+  delay(1000);
 
-  // Mulai koneksi WiFi
-  Serial.print("Menghubungkan ke WiFi: ");
-  Serial.println(ssid);
+  Serial.println("Menghubungkan ke WiFi...");
   WiFi.begin(ssid, pass);
-
-  unsigned long startAttemptTime = millis();
-
-  // Coba konek ke WiFi maksimal 30 detik
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 30000) {
+  while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
     delay(500);
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi Terhubung!");
-    Serial.print("IP Address: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\nWiFi gagal terhubung.");
-  }
+  Serial.println("\nWiFi Terhubung!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
 
-  // Lanjut konek ke Blynk
   Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
 
   pinMode(PIN_RAIN_SENSOR, INPUT);
@@ -88,29 +141,37 @@ void setup() {
 }
 
 void loop() {
-  Blynk.run();
-  cekHujan();
-  ukurVolume();
-  ukurTDS();
-  kendaliSolenoid();
-  updateLED();
+  koneksiWiFi();
+
+  if (wifiConnected && Blynk.connected()) {
+    Blynk.run();
+    cekHujan();
+    ukurVolume();
+    ukurTDS();
+
+    if (modeOtomatis) {
+      kendaliSolenoid();
+    }
+
+    updateLED();
+    sinkronRelay();
+  } else {
+    Serial.println("Menunggu koneksi WiFi & Blynk...");
+  }
+
   delay(1000);
 }
 
 void cekHujan() {
   rainValue = analogRead(PIN_RAIN_SENSOR);
-
-  // Tampilkan nilai ke Serial Monitor
   Serial.print("Nilai sensor hujan: ");
   Serial.println(rainValue);
 
-  // Tentukan status cuaca
   if (rainValue < threshold) {
     Serial.println("Status: HUJAN");
   } else {
     Serial.println("Status: TIDAK HUJAN");
   }
-
 }
 
 void ukurVolume() {
@@ -167,4 +228,10 @@ void updateLED() {
     digitalWrite(LED_HIJAU, HIGH);
     Serial.println("LED Indikator: HIJAU (Air penuh)");
   }
+}
+
+void sinkronRelay() {
+  Blynk.virtualWrite(VPIN_RELAY_A, digitalRead(RELAY_A));
+  Blynk.virtualWrite(VPIN_RELAY_B, digitalRead(RELAY_B));
+  Blynk.virtualWrite(VPIN_OTOMATIS, modeOtomatis);
 }
