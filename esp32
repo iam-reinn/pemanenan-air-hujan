@@ -8,7 +8,7 @@
 
 // WiFi credentials
 char ssid[] = "POCO X3 Pro";
-char pass[] = "";
+char pass[] = "11110000";
 
 // Pin konfigurasi
 #define PIN_RAIN_SENSOR 32
